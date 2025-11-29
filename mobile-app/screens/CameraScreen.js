@@ -13,6 +13,7 @@ import { Ionicons } from '@expo/vector-icons';
 import * as Speech from 'expo-speech';
 import * as Haptics from 'expo-haptics';
 import { analyzeImageWithAI, createAudioDescription } from '../services/aiService';
+import { playEmotionMorse, playEmotionsSequence, playNotification } from '../services/morseCodeService';
 
 const { width, height } = Dimensions.get('window');
 const ANALYSIS_INTERVAL = 3000; // Analyze every 3 seconds when active
@@ -23,9 +24,11 @@ export default function CameraScreen() {
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [detections, setDetections] = useState([]);
   const [lastAnalysis, setLastAnalysis] = useState(null);
+  const [detectedEmotions, setDetectedEmotions] = useState([]);
   const [error, setError] = useState(null);
   const cameraRef = useRef(null);
   const analysisIntervalRef = useRef(null);
+  const morsePlayingRef = useRef(false);
 
   useEffect(() => {
     if (isActive && permission?.granted) {
@@ -62,6 +65,8 @@ export default function CameraScreen() {
     }
     setDetections([]);
     setLastAnalysis(null);
+    setDetectedEmotions([]);
+    morsePlayingRef.current = false;
   };
 
   const captureAndAnalyze = async () => {
@@ -88,6 +93,23 @@ export default function CameraScreen() {
       if (analysis.success) {
         setLastAnalysis(analysis);
         setError(null);
+
+        // Update detected emotions
+        if (analysis.emotions && analysis.emotions.length > 0) {
+          setDetectedEmotions(analysis.emotions);
+          
+          // Play morse code for detected emotions (if not already playing)
+          if (!morsePlayingRef.current) {
+            morsePlayingRef.current = true;
+            playEmotionsSequence(analysis.emotions).then(() => {
+              morsePlayingRef.current = false;
+            }).catch(() => {
+              morsePlayingRef.current = false;
+            });
+          }
+        } else {
+          setDetectedEmotions([]);
+        }
 
         // Create visual detections from objects
         const newDetections = analysis.objects.map((obj, index) => ({
@@ -276,15 +298,32 @@ export default function CameraScreen() {
           </Text>
         </TouchableOpacity>
 
-        {isActive && (
-          <TouchableOpacity
-            style={styles.controlButton}
-            onPress={requestDescription}
-          >
-            <Ionicons name="mic" size={24} color="#fff" />
-            <Text style={styles.controlButtonText}>Describe</Text>
-          </TouchableOpacity>
-        )}
+          {isActive && (
+            <>
+              <TouchableOpacity
+                style={styles.controlButton}
+                onPress={requestDescription}
+              >
+                <Ionicons name="mic" size={24} color="#fff" />
+                <Text style={styles.controlButtonText}>Describe</Text>
+              </TouchableOpacity>
+              {detectedEmotions.length > 0 && (
+                <TouchableOpacity
+                  style={styles.controlButton}
+                  onPress={async () => {
+                    if (!morsePlayingRef.current) {
+                      morsePlayingRef.current = true;
+                      await playEmotionsSequence(detectedEmotions);
+                      morsePlayingRef.current = false;
+                    }
+                  }}
+                >
+                  <Ionicons name="pulse" size={24} color="#fff" />
+                  <Text style={styles.controlButtonText}>Morse</Text>
+                </TouchableOpacity>
+              )}
+            </>
+          )}
       </View>
 
       {/* Status Bar */}
@@ -300,14 +339,50 @@ export default function CameraScreen() {
           </Text>
         </View>
         {isActive && lastAnalysis && (
-          <View style={styles.statusItem}>
-            <Ionicons name="eye" size={16} color="#fff" />
-            <Text style={styles.statusText}>
-              {detections.length} objects
-            </Text>
-          </View>
+          <>
+            <View style={styles.statusItem}>
+              <Ionicons name="eye" size={16} color="#fff" />
+              <Text style={styles.statusText}>
+                {detections.length} objects
+              </Text>
+            </View>
+            {detectedEmotions.length > 0 && (
+              <View style={styles.statusItem}>
+                <Ionicons name="happy" size={16} color="#fbbf24" />
+                <Text style={styles.statusText}>
+                  {detectedEmotions.length} emotion{detectedEmotions.length > 1 ? 's' : ''}
+                </Text>
+              </View>
+            )}
+          </>
         )}
       </View>
+
+      {/* Emotion Display */}
+      {isActive && detectedEmotions.length > 0 && (
+        <View style={styles.emotionDisplay} pointerEvents="box-none">
+          <Text style={styles.emotionLabel}>Detected Emotions:</Text>
+          <View style={styles.emotionList}>
+            {detectedEmotions.map((emotion, index) => (
+              <View key={index} style={styles.emotionBadge}>
+                <Ionicons 
+                  name={
+                    emotion === 'happiness' ? 'happy' :
+                    emotion === 'sadness' ? 'sad' :
+                    emotion === 'anger' ? 'flame' :
+                    emotion === 'fear' ? 'warning' :
+                    emotion === 'surprise' ? 'flash' :
+                    'remove-circle'
+                  }
+                  size={14}
+                  color="#fff"
+                />
+                <Text style={styles.emotionText}>{emotion}</Text>
+              </View>
+            ))}
+          </View>
+        </View>
+      )}
     </View>
   );
 }
@@ -460,5 +535,41 @@ const styles = StyleSheet.create({
     color: '#fff',
     fontSize: 16,
     fontWeight: '600',
+  },
+  emotionDisplay: {
+    position: 'absolute',
+    bottom: 120,
+    left: 20,
+    right: 20,
+    backgroundColor: 'rgba(0, 0, 0, 0.8)',
+    padding: 12,
+    borderRadius: 8,
+    zIndex: 2,
+  },
+  emotionLabel: {
+    color: '#fff',
+    fontSize: 12,
+    fontWeight: '600',
+    marginBottom: 8,
+  },
+  emotionList: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  emotionBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(37, 99, 235, 0.8)',
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 16,
+    gap: 6,
+  },
+  emotionText: {
+    color: '#fff',
+    fontSize: 12,
+    fontWeight: '500',
+    textTransform: 'capitalize',
   },
 });
