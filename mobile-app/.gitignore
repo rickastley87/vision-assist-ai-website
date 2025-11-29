@@ -15,6 +15,9 @@ web-build/
 .env.local
 .env.*.local
 
+# API Keys - DO NOT COMMIT
+config/api.js
+
 # macOS
 .DS_Store
 

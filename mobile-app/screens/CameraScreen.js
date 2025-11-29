@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   View,
   Text,
@@ -6,17 +6,26 @@ import {
   TouchableOpacity,
   Alert,
   ActivityIndicator,
+  Dimensions,
 } from 'react-native';
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import { Ionicons } from '@expo/vector-icons';
 import * as Speech from 'expo-speech';
 import * as Haptics from 'expo-haptics';
+import { analyzeImageWithAI, createAudioDescription } from '../services/aiService';
+
+const { width, height } = Dimensions.get('window');
+const ANALYSIS_INTERVAL = 3000; // Analyze every 3 seconds when active
 
 export default function CameraScreen() {
   const [permission, requestPermission] = useCameraPermissions();
   const [isActive, setIsActive] = useState(false);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [detections, setDetections] = useState([]);
+  const [lastAnalysis, setLastAnalysis] = useState(null);
+  const [error, setError] = useState(null);
+  const cameraRef = useRef(null);
+  const analysisIntervalRef = useRef(null);
 
   useEffect(() => {
     if (isActive && permission?.granted) {
@@ -24,34 +33,97 @@ export default function CameraScreen() {
     } else {
       stopAnalysis();
     }
+
+    return () => {
+      if (analysisIntervalRef.current) {
+        clearInterval(analysisIntervalRef.current);
+      }
+    };
   }, [isActive, permission]);
 
   const startAnalysis = () => {
     setIsAnalyzing(true);
-    simulateDetection();
+    setError(null);
+    // Start periodic analysis
+    captureAndAnalyze();
+    analysisIntervalRef.current = setInterval(() => {
+      if (isActive) {
+        captureAndAnalyze();
+      }
+    }, ANALYSIS_INTERVAL);
   };
 
   const stopAnalysis = () => {
     setIsAnalyzing(false);
     Speech.stop();
+    if (analysisIntervalRef.current) {
+      clearInterval(analysisIntervalRef.current);
+      analysisIntervalRef.current = null;
+    }
+    setDetections([]);
+    setLastAnalysis(null);
   };
 
-  const simulateDetection = () => {
-    const mockDetections = [
-      { id: 1, label: 'Door', x: 100, y: 200, width: 80, height: 120 },
-      { id: 2, label: 'Chair', x: 250, y: 400, width: 60, height: 80 },
-    ];
-    setDetections(mockDetections);
-    const description = "I can see a door ahead and a chair to your right.";
-    speak(description);
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+  const captureAndAnalyze = async () => {
+    if (!cameraRef.current || !isActive) return;
+
+    try {
+      setIsAnalyzing(true);
+      
+      // Take a photo
+      const photo = await cameraRef.current.takePictureAsync({
+        quality: 0.7,
+        base64: true,
+        skipProcessing: false,
+      });
+
+      if (!photo?.base64) {
+        throw new Error('Failed to capture image');
+      }
+
+      // Analyze with AI
+      const analysis = await analyzeImageWithAI(photo.base64);
+
+      if (analysis.success) {
+        setLastAnalysis(analysis);
+        setError(null);
+
+        // Create visual detections from objects
+        const newDetections = analysis.objects.map((obj, index) => ({
+          id: index + 1,
+          label: obj,
+          x: Math.random() * (width - 100) + 50, // Random position for demo
+          y: Math.random() * (height - 200) + 100,
+          width: 80,
+          height: 60,
+        }));
+        setDetections(newDetections);
+
+        // Speak the description
+        const audioText = createAudioDescription(analysis);
+        speak(audioText);
+
+        // Haptic feedback
+        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+      } else {
+        setError(analysis.error || 'Analysis failed');
+        Alert.alert('Analysis Error', analysis.description);
+      }
+    } catch (err) {
+      console.error('Capture/Analysis Error:', err);
+      setError(err.message);
+      Alert.alert('Error', `Failed to analyze image: ${err.message}`);
+    } finally {
+      setIsAnalyzing(false);
+    }
   };
 
   const speak = (text) => {
+    Speech.stop(); // Stop any previous speech
     Speech.speak(text, {
       language: 'en',
       pitch: 1.0,
-      rate: 0.9,
+      rate: 0.85, // Slightly slower for clarity
     });
   };
 
@@ -65,6 +137,20 @@ export default function CameraScreen() {
       return;
     }
     setIsActive(!isActive);
+  };
+
+  const requestDescription = () => {
+    if (!isActive) {
+      Alert.alert('Camera Not Active', 'Please start the camera first.');
+      return;
+    }
+    if (lastAnalysis) {
+      const audioText = createAudioDescription(lastAnalysis);
+      speak(audioText);
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    } else {
+      captureAndAnalyze();
+    }
   };
 
   if (!permission) {
@@ -97,6 +183,7 @@ export default function CameraScreen() {
   return (
     <View style={styles.container}>
       <CameraView
+        ref={cameraRef}
         style={styles.camera}
         facing="back"
       >
@@ -121,7 +208,13 @@ export default function CameraScreen() {
             {isAnalyzing && (
               <View style={styles.analyzingIndicator}>
                 <ActivityIndicator size="small" color="#fff" />
-                <Text style={styles.analyzingText}>Analyzing...</Text>
+                <Text style={styles.analyzingText}>AI Analyzing...</Text>
+              </View>
+            )}
+            {error && (
+              <View style={styles.errorIndicator}>
+                <Ionicons name="warning" size={16} color="#ef4444" />
+                <Text style={styles.errorText}>{error}</Text>
               </View>
             )}
           </View>
@@ -141,6 +234,38 @@ export default function CameraScreen() {
               {isActive ? 'Stop' : 'Start'}
             </Text>
           </TouchableOpacity>
+
+          {isActive && (
+            <TouchableOpacity
+              style={styles.controlButton}
+              onPress={requestDescription}
+            >
+              <Ionicons name="mic" size={24} color="#fff" />
+              <Text style={styles.controlButtonText}>Describe</Text>
+            </TouchableOpacity>
+          )}
+        </View>
+
+        {/* Status Bar */}
+        <View style={styles.statusBar}>
+          <View style={styles.statusItem}>
+            <Ionicons
+              name={isActive ? 'radio-button-on' : 'radio-button-off'}
+              size={16}
+              color={isActive ? '#10b981' : '#ef4444'}
+            />
+            <Text style={styles.statusText}>
+              {isActive ? 'AI Active' : 'Inactive'}
+            </Text>
+          </View>
+          {isActive && lastAnalysis && (
+            <View style={styles.statusItem}>
+              <Ionicons name="eye" size={16} color="#fff" />
+              <Text style={styles.statusText}>
+                {detections.length} objects
+              </Text>
+            </View>
+          )}
         </View>
       </CameraView>
     </View>
@@ -197,6 +322,19 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '500',
   },
+  errorIndicator: {
+    position: 'absolute',
+    top: 100,
+    left: 20,
+    right: 20,
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(239, 68, 68, 0.9)',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 8,
+    gap: 8,
+  },
   controls: {
     position: 'absolute',
     bottom: 40,
@@ -204,6 +342,7 @@ const styles = StyleSheet.create({
     right: 0,
     flexDirection: 'row',
     justifyContent: 'center',
+    gap: 20,
     paddingHorizontal: 20,
   },
   controlButton: {
@@ -225,6 +364,28 @@ const styles = StyleSheet.create({
     color: '#fff',
     fontSize: 16,
     fontWeight: '600',
+  },
+  statusBar: {
+    position: 'absolute',
+    top: 40,
+    left: 20,
+    right: 20,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    backgroundColor: 'rgba(0, 0, 0, 0.7)',
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderRadius: 8,
+  },
+  statusItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  statusText: {
+    color: '#fff',
+    fontSize: 14,
+    fontWeight: '500',
   },
   loadingText: {
     marginTop: 16,
@@ -257,4 +418,3 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
 });
-
