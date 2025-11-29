@@ -69,6 +69,7 @@ export default function CameraScreen() {
 
     try {
       setIsAnalyzing(true);
+      setError(null);
       
       // Take a photo
       const photo = await cameraRef.current.takePictureAsync({
@@ -78,7 +79,7 @@ export default function CameraScreen() {
       });
 
       if (!photo?.base64) {
-        throw new Error('Failed to capture image');
+        throw new Error('Failed to capture image. Please try again.');
       }
 
       // Analyze with AI
@@ -106,13 +107,44 @@ export default function CameraScreen() {
         // Haptic feedback
         Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
       } else {
-        setError(analysis.error || 'Analysis failed');
-        Alert.alert('Analysis Error', analysis.description);
+        const errorMsg = analysis.error || 'Analysis failed';
+        setError(errorMsg);
+        
+        // Handle quota exceeded error specifically
+        if (errorMsg.includes('quota') || errorMsg.includes('billing')) {
+          Alert.alert(
+            'API Quota Exceeded',
+            'Your OpenAI API quota has been exceeded. Please check your billing and add credits to continue using Vision Assist.',
+            [{ text: 'OK' }]
+          );
+          // Stop analysis to prevent repeated errors
+          setIsActive(false);
+        } else {
+          Alert.alert('Analysis Error', analysis.description);
+        }
       }
     } catch (err) {
       console.error('Capture/Analysis Error:', err);
-      setError(err.message);
-      Alert.alert('Error', `Failed to analyze image: ${err.message}`);
+      const errorMsg = err.message || 'Unknown error occurred';
+      setError(errorMsg);
+      
+      // Handle specific error types
+      if (errorMsg.includes('Image could not be captured')) {
+        Alert.alert(
+          'Camera Error',
+          'Unable to capture image. Please ensure the camera is not being used by another app and try again.',
+          [{ text: 'OK' }]
+        );
+      } else if (errorMsg.includes('quota') || errorMsg.includes('billing')) {
+        Alert.alert(
+          'API Quota Exceeded',
+          'Your OpenAI API quota has been exceeded. Please check your billing.',
+          [{ text: 'OK' }]
+        );
+        setIsActive(false);
+      } else {
+        Alert.alert('Error', `Failed to analyze image: ${errorMsg}`);
+      }
     } finally {
       setIsAnalyzing(false);
     }
@@ -186,88 +218,96 @@ export default function CameraScreen() {
         ref={cameraRef}
         style={styles.camera}
         facing="back"
-      >
-        {isActive && (
-          <View style={styles.overlay}>
-            {detections.map((detection) => (
-              <View
-                key={detection.id}
-                style={[
-                  styles.detectionBox,
-                  {
-                    left: detection.x,
-                    top: detection.y,
-                    width: detection.width,
-                    height: detection.height,
-                  },
-                ]}
-              >
-                <Text style={styles.detectionLabel}>{detection.label}</Text>
-              </View>
-            ))}
-            {isAnalyzing && (
-              <View style={styles.analyzingIndicator}>
-                <ActivityIndicator size="small" color="#fff" />
-                <Text style={styles.analyzingText}>AI Analyzing...</Text>
-              </View>
-            )}
-            {error && (
-              <View style={styles.errorIndicator}>
-                <Ionicons name="warning" size={16} color="#ef4444" />
-                <Text style={styles.errorText}>{error}</Text>
-              </View>
-            )}
-          </View>
-        )}
-
-        <View style={styles.controls}>
-          <TouchableOpacity
-            style={[styles.controlButton, isActive && styles.controlButtonActive]}
-            onPress={toggleCamera}
-          >
-            <Ionicons
-              name={isActive ? 'stop-circle' : 'play-circle'}
-              size={32}
-              color="#fff"
-            />
-            <Text style={styles.controlButtonText}>
-              {isActive ? 'Stop' : 'Start'}
-            </Text>
-          </TouchableOpacity>
-
-          {isActive && (
-            <TouchableOpacity
-              style={styles.controlButton}
-              onPress={requestDescription}
+      />
+      
+      {/* Overlay - positioned absolutely outside CameraView */}
+      {isActive && (
+        <View style={styles.overlay} pointerEvents="box-none">
+          {detections.map((detection) => (
+            <View
+              key={detection.id}
+              style={[
+                styles.detectionBox,
+                {
+                  left: detection.x,
+                  top: detection.y,
+                  width: detection.width,
+                  height: detection.height,
+                },
+              ]}
             >
-              <Ionicons name="mic" size={24} color="#fff" />
-              <Text style={styles.controlButtonText}>Describe</Text>
-            </TouchableOpacity>
+              <Text style={styles.detectionLabel}>{detection.label}</Text>
+            </View>
+          ))}
+          {isAnalyzing && (
+            <View style={styles.analyzingIndicator}>
+              <ActivityIndicator size="small" color="#fff" />
+              <Text style={styles.analyzingText}>AI Analyzing...</Text>
+            </View>
           )}
-        </View>
-
-        {/* Status Bar */}
-        <View style={styles.statusBar}>
-          <View style={styles.statusItem}>
-            <Ionicons
-              name={isActive ? 'radio-button-on' : 'radio-button-off'}
-              size={16}
-              color={isActive ? '#10b981' : '#ef4444'}
-            />
-            <Text style={styles.statusText}>
-              {isActive ? 'AI Active' : 'Inactive'}
-            </Text>
-          </View>
-          {isActive && lastAnalysis && (
-            <View style={styles.statusItem}>
-              <Ionicons name="eye" size={16} color="#fff" />
-              <Text style={styles.statusText}>
-                {detections.length} objects
+          {error && (
+            <View style={styles.errorIndicator}>
+              <Ionicons name="warning" size={16} color="#ef4444" />
+              <Text style={styles.errorTextSmall}>
+                {error.includes('quota') || error.includes('billing') 
+                  ? 'API quota exceeded. Please check your OpenAI billing.'
+                  : error.length > 50 
+                  ? error.substring(0, 50) + '...'
+                  : error}
               </Text>
             </View>
           )}
         </View>
-      </CameraView>
+      )}
+
+      {/* Controls */}
+      <View style={styles.controls} pointerEvents="box-none">
+        <TouchableOpacity
+          style={[styles.controlButton, isActive && styles.controlButtonActive]}
+          onPress={toggleCamera}
+        >
+          <Ionicons
+            name={isActive ? 'stop-circle' : 'play-circle'}
+            size={32}
+            color="#fff"
+          />
+          <Text style={styles.controlButtonText}>
+            {isActive ? 'Stop' : 'Start'}
+          </Text>
+        </TouchableOpacity>
+
+        {isActive && (
+          <TouchableOpacity
+            style={styles.controlButton}
+            onPress={requestDescription}
+          >
+            <Ionicons name="mic" size={24} color="#fff" />
+            <Text style={styles.controlButtonText}>Describe</Text>
+          </TouchableOpacity>
+        )}
+      </View>
+
+      {/* Status Bar */}
+      <View style={styles.statusBar} pointerEvents="box-none">
+        <View style={styles.statusItem}>
+          <Ionicons
+            name={isActive ? 'radio-button-on' : 'radio-button-off'}
+            size={16}
+            color={isActive ? '#10b981' : '#ef4444'}
+          />
+          <Text style={styles.statusText}>
+            {isActive ? 'AI Active' : 'Inactive'}
+          </Text>
+        </View>
+        {isActive && lastAnalysis && (
+          <View style={styles.statusItem}>
+            <Ionicons name="eye" size={16} color="#fff" />
+            <Text style={styles.statusText}>
+              {detections.length} objects
+            </Text>
+          </View>
+        )}
+      </View>
     </View>
   );
 }
@@ -281,12 +321,8 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   overlay: {
-    flex: 1,
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
+    ...StyleSheet.absoluteFillObject,
+    zIndex: 1,
   },
   detectionBox: {
     position: 'absolute',
@@ -344,6 +380,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     gap: 20,
     paddingHorizontal: 20,
+    zIndex: 2,
   },
   controlButton: {
     backgroundColor: 'rgba(0, 0, 0, 0.6)',
@@ -376,6 +413,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingVertical: 12,
     borderRadius: 8,
+    zIndex: 2,
   },
   statusItem: {
     flexDirection: 'row',
@@ -405,6 +443,12 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     marginBottom: 24,
     paddingHorizontal: 40,
+  },
+  errorTextSmall: {
+    color: '#fff',
+    fontSize: 12,
+    fontWeight: '500',
+    flex: 1,
   },
   button: {
     backgroundColor: '#2563eb',

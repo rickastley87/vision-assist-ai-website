@@ -38,7 +38,18 @@ export async function analyzeImageWithAI(imageBase64) {
 
     if (!response.ok) {
       const errorData = await response.json().catch(() => ({}));
-      throw new Error(errorData.error?.message || `API error: ${response.status}`);
+      const errorMessage = errorData.error?.message || `API error: ${response.status}`;
+      
+      // Provide user-friendly error messages
+      if (errorMessage.includes('quota') || errorMessage.includes('billing')) {
+        throw new Error('You exceeded your current quota, please check your plan and billing details.');
+      } else if (response.status === 401) {
+        throw new Error('Invalid API key. Please check your API configuration.');
+      } else if (response.status === 429) {
+        throw new Error('Rate limit exceeded. Please wait a moment and try again.');
+      } else {
+        throw new Error(errorMessage);
+      }
     }
 
     const data = await response.json();
