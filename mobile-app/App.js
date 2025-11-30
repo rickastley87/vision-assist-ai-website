@@ -11,6 +11,7 @@ import CameraScreen from './screens/CameraScreen';
 import FeaturesScreen from './screens/FeaturesScreen';
 import HowItWorksScreen from './screens/HowItWorksScreen';
 import AccessibilityScreen from './screens/AccessibilityScreen';
+import EmotionsScreen from './screens/EmotionsScreen';
 
 const Tab = createBottomTabNavigator();
 
@@ -34,6 +35,8 @@ export default function App() {
                 iconName = focused ? 'information-circle' : 'information-circle-outline';
               } else if (route.name === 'Accessibility') {
                 iconName = focused ? 'accessibility' : 'accessibility-outline';
+              } else if (route.name === 'Emotions') {
+                iconName = focused ? 'happy' : 'happy-outline';
               }
 
               return <Ionicons name={iconName} size={size} color={color} />;
@@ -51,6 +54,7 @@ export default function App() {
         >
           <Tab.Screen name="Home" component={HomeScreen} />
           <Tab.Screen name="Camera" component={CameraScreen} />
+          <Tab.Screen name="Emotions" component={EmotionsScreen} />
           <Tab.Screen name="Features" component={FeaturesScreen} />
           <Tab.Screen name="How It Works" component={HowItWorksScreen} />
           <Tab.Screen name="Accessibility" component={AccessibilityScreen} />

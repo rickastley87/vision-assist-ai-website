@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { useFocusEffect } from '@react-navigation/native';
 import {
   View,
   Text,
@@ -12,6 +13,7 @@ import { CameraView, useCameraPermissions } from 'expo-camera';
 import { Ionicons } from '@expo/vector-icons';
 import * as Speech from 'expo-speech';
 import * as Haptics from 'expo-haptics';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { analyzeImageWithAI, createAudioDescription } from '../services/aiService';
 import { playEmotionMorse, playEmotionsSequence, playNotification } from '../services/morseCodeService';
 
@@ -26,9 +28,21 @@ export default function CameraScreen() {
   const [lastAnalysis, setLastAnalysis] = useState(null);
   const [detectedEmotions, setDetectedEmotions] = useState([]);
   const [error, setError] = useState(null);
+  const [emotionSettings, setEmotionSettings] = useState({
+    emotionDetectionEnabled: true,
+    morseCodeEnabled: true,
+    autoPlayMorse: true,
+  });
   const cameraRef = useRef(null);
   const analysisIntervalRef = useRef(null);
   const morsePlayingRef = useRef(false);
+
+  // Reload settings when screen comes into focus
+  useFocusEffect(
+    React.useCallback(() => {
+      loadEmotionSettings();
+    }, [])
+  );
 
   useEffect(() => {
     if (isActive && permission?.granted) {
@@ -43,6 +57,17 @@ export default function CameraScreen() {
       }
     };
   }, [isActive, permission]);
+
+  const loadEmotionSettings = async () => {
+    try {
+      const settings = await AsyncStorage.getItem('@emotion_settings');
+      if (settings) {
+        setEmotionSettings(JSON.parse(settings));
+      }
+    } catch (error) {
+      console.error('Error loading emotion settings:', error);
+    }
+  };
 
   const startAnalysis = () => {
     setIsAnalyzing(true);
@@ -94,12 +119,12 @@ export default function CameraScreen() {
         setLastAnalysis(analysis);
         setError(null);
 
-        // Update detected emotions
-        if (analysis.emotions && analysis.emotions.length > 0) {
+        // Update detected emotions (only if emotion detection is enabled)
+        if (emotionSettings.emotionDetectionEnabled && analysis.emotions && analysis.emotions.length > 0) {
           setDetectedEmotions(analysis.emotions);
           
-          // Play morse code for detected emotions (if not already playing)
-          if (!morsePlayingRef.current) {
+          // Play morse code for detected emotions (if enabled and auto-play is on)
+          if (emotionSettings.morseCodeEnabled && emotionSettings.autoPlayMorse && !morsePlayingRef.current) {
             morsePlayingRef.current = true;
             playEmotionsSequence(analysis.emotions).then(() => {
               morsePlayingRef.current = false;
